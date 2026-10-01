@@ -56,7 +56,9 @@ jobs:
           SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
         run: |
           git remote set-url --push origin "https://x-access-token:${SYNC_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          if ! GIT_TERMINAL_PROMPT=0 git ls-remote "$(git remote get-url --push origin)" HEAD > /dev/null; then
+          # the repo is public, so an anonymous read would succeed; ask the API
+          # what this token may do instead
+          if [[ "$(GH_TOKEN="$SYNC_TOKEN" gh api "repos/$GITHUB_REPOSITORY" --jq .permissions.push 2>/dev/null)" != true ]]; then
             echo "::error::GitHub rejected SYNC_TOKEN; check it is unexpired and grants this repository Contents + Workflows read/write"
             exit 1
           fi
