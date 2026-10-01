@@ -39,8 +39,8 @@ jobs:
             echo "::error::only v7.0.0 and above are built"
             exit 1
           fi
-          if [[ -z "$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/$TAG" --jq '.[] | select(.ref == "refs/tags/'"$TAG"'")')" ]]; then
-            echo "::error::tag '$TAG' does not exist in this repository yet; run the 'Sync upstream' workflow first"
+          if [[ -z "$(git ls-remote --tags https://github.com/hashcat/hashcat.git "refs/tags/$TAG")" ]]; then
+            echo "::error::tag '$TAG' does not exist upstream"
             exit 1
           fi
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json tagName > /dev/null 2>&1; then
@@ -63,7 +63,11 @@ jobs:
       - name: Check out hashcat source at tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          # built straight from upstream: hashcat's tags touch .github/workflows/,
+          # so GITHUB_TOKEN cannot mirror them into this repo (see sync-upstream.yml)
+          repository: hashcat/hashcat
           ref: refs/tags/${{ inputs.tag }}
+          persist-credentials: false
           fetch-depth: 1
 
       - name: Build
@@ -93,7 +97,7 @@ jobs:
       - name: Create release
         run: |
           {
-            echo "hashcat $TAG built from upstream tag \`$TAG\` ($(git rev-parse --short HEAD))"
+            echo "hashcat $TAG built from upstream tag \`$TAG\` (hashcat/hashcat@$(git rev-parse HEAD))"
             echo "for macOS on Apple Silicon (runner: \`$ImageOS\`)."
             echo
             echo "The binaries are not code-signed; after extracting run:"
@@ -104,7 +108,7 @@ jobs:
             echo "Upstream release notes: https://github.com/hashcat/hashcat/releases/tag/$TAG"
           } > "$RUNNER_TEMP/notes.md"
           gh release create "$TAG" \
-            --verify-tag \
+            --target "$GITHUB_SHA" \
             --title "hashcat $TAG (macOS Apple Silicon)" \
             --notes-file "$RUNNER_TEMP/notes.md" \
             "$RUNNER_TEMP"/dist/*

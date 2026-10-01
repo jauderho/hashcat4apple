@@ -13,6 +13,11 @@ concurrency:
   group: sync-upstream
   cancel-in-progress: false
 
+# Unlike FFmpeg (whose CI lives in .forgejo/), hashcat keeps its CI in
+# .github/workflows/, and GITHUB_TOKEN may not push any commit or ref that
+# touches those files. So upstream refs are never pushed as-is: master gets a
+# snapshot commit of upstream's tree with our own .github/workflows/ kept, and
+# release tags are created by the build workflow on that commit.
 jobs:
   sync:
     runs-on: ubuntu-latest
@@ -24,63 +29,39 @@ jobs:
       GH_REPO: ${{ github.repository }}
       UPSTREAM: https://github.com/hashcat/hashcat.git
     steps:
-      - name: Require SYNC_TOKEN
-        # upstream tags and master touch .github/workflows/, which GitHub
-        # refuses to accept from GITHUB_TOKEN; pushing needs a token with the
-        # Workflows permission
-        env:
-          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
-        run: |
-          if [[ -z "$SYNC_TOKEN" ]]; then
-            echo "::error::secret SYNC_TOKEN is not set (fine-grained PAT on this repo with Contents: write and Workflows: write)"
-            exit 1
-          fi
-
       - name: Check out master
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          # read with the default token, as ffmpeg4apple does; SYNC_TOKEN is
-          # only used for pushing (see "Configure push remote")
-          persist-credentials: false
-          fetch-depth: 0
-          filter: blob:none
+          fetch-depth: 1
 
-      - name: Fetch upstream branch and release tags
+      - name: Fetch upstream master
         run: |
           git remote add upstream "$UPSTREAM"
-          git fetch --no-tags upstream "+refs/heads/master:refs/remotes/upstream/master"
-          git fetch --no-tags upstream "+refs/tags/v*:refs/tags/v*"
+          git fetch --no-tags --depth 1 upstream "+refs/heads/master:refs/remotes/upstream/master"
 
-      - name: Configure push remote
-        env:
-          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
-        run: |
-          git remote set-url --push origin "https://x-access-token:${SYNC_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          # the repo is public, so an anonymous read would succeed; ask the API
-          # what this token may do instead
-          if [[ "$(GH_TOKEN="$SYNC_TOKEN" gh api "repos/$GITHUB_REPOSITORY" --jq .permissions.push 2>/dev/null)" != true ]]; then
-            echo "::error::GitHub rejected SYNC_TOKEN; check it is unexpired and grants this repository Contents + Workflows read/write"
-            exit 1
-          fi
-
-      - name: Merge upstream master
+      - name: Snapshot upstream master, keeping our workflows
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if ! git merge --no-edit upstream/master; then
-            git merge --abort
-            echo "::warning::merge with upstream/master conflicted; master not updated (tags still synced)"
+          UP=$(git rev-parse upstream/master)
+          git read-tree upstream/master
+          git rm -r -q --cached --ignore-unmatch .github/workflows
+          git read-tree --prefix=.github/workflows/ HEAD:.github/workflows
+          TREE=$(git write-tree)
+          if [[ "$TREE" == "$(git rev-parse 'HEAD^{tree}')" ]]; then
+            echo "master already matches upstream ${UP:0:10}"
+            exit 0
           fi
-
-      - name: Push tags
-        run: git push origin --tags
+          COMMIT=$(git commit-tree "$TREE" -p HEAD -m "Sync upstream hashcat/hashcat@${UP:0:10}" -m "Upstream-Commit: $UP")
+          git reset -q --hard "$COMMIT"
+          git push origin HEAD:master
 
       - name: Dispatch builds for unreleased tags (v7.0.0 and above)
         run: |
           MIN=70000  # v7.0.0
           ACTIVE=$(gh run list --workflow macos-release.yml --limit 100 --json displayTitle,status \
             --jq '.[] | select(.status == "queued" or .status == "in_progress" or .status == "waiting") | .displayTitle')
-          for TAG in $(git tag --list 'v*' | sort -V); do
+          for TAG in $(git ls-remote --tags upstream 'v*' | grep -v '\^{}' | sed 's|.*refs/tags/||' | sort -V); do
             [[ "$TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || continue
             NUM=$(( ${BASH_REMATCH[1]} * 10000 + ${BASH_REMATCH[2]} * 100 + ${BASH_REMATCH[3]} ))
             (( NUM >= MIN )) || continue
@@ -92,13 +73,5 @@ jobs:
               continue
             fi
             echo "dispatching build for $TAG"
-            gh workflow run macos-release.yml --ref "$GITHUB_REF_NAME" -f tag="$TAG"
+            gh workflow run macos-release.yml --ref master -f tag="$TAG"
           done
-
-      - name: Push master
-        run: |
-          # master may have moved while this job ran (e.g. PR merges);
-          # integrate it so the push is a fast-forward
-          git fetch origin master
-          git merge --no-edit origin/master
-          git push origin HEAD:master
