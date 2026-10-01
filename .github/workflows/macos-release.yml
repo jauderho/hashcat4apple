@@ -90,8 +90,8 @@ jobs:
                    layouts masks modules rules tools tunings README.md; do
             [[ -e "$f" ]] && cp -R "$f" "$STAGE/"
           done
-          tar -C "$RUNNER_TEMP" -cJf "$DIST/$NAME.tar.xz" "$NAME"
-          (cd "$DIST" && shasum -a 256 *.tar.xz > SHA256SUMS)
+          tar -C "$RUNNER_TEMP" -czf "$DIST/$NAME.tar.gz" "$NAME"
+          (cd "$DIST" && shasum -a 256 *.tar.gz > SHA256SUMS)
           cat "$DIST/SHA256SUMS"
 
       - name: Create release
