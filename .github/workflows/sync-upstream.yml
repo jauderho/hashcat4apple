@@ -24,9 +24,22 @@ jobs:
       GH_REPO: ${{ github.repository }}
       UPSTREAM: https://github.com/hashcat/hashcat.git
     steps:
+      - name: Require SYNC_TOKEN
+        # upstream tags and master touch .github/workflows/, which GitHub
+        # refuses to accept from GITHUB_TOKEN; pushing needs a token with the
+        # Workflows permission
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          if [[ -z "$SYNC_TOKEN" ]]; then
+            echo "::error::secret SYNC_TOKEN is not set (fine-grained PAT on this repo with Contents: write and Workflows: write)"
+            exit 1
+          fi
+
       - name: Check out master
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          token: ${{ secrets.SYNC_TOKEN }}
           fetch-depth: 0
           filter: blob:none
 
