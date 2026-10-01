@@ -45,7 +45,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           UP=$(git rev-parse upstream/master)
           git read-tree upstream/master
-          git rm -r -q --cached --ignore-unmatch .github/workflows
+          git rm -r -q -f --cached --ignore-unmatch .github/workflows
           git read-tree --prefix=.github/workflows/ HEAD:.github/workflows
           TREE=$(git write-tree)
           if [[ "$TREE" == "$(git rev-parse 'HEAD^{tree}')" ]]; then
