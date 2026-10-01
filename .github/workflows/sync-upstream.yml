@@ -39,7 +39,9 @@ jobs:
       - name: Check out master
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          token: ${{ secrets.SYNC_TOKEN }}
+          # read with the default token, as ffmpeg4apple does; SYNC_TOKEN is
+          # only used for pushing (see "Configure push remote")
+          persist-credentials: false
           fetch-depth: 0
           filter: blob:none
 
@@ -48,6 +50,16 @@ jobs:
           git remote add upstream "$UPSTREAM"
           git fetch --no-tags upstream "+refs/heads/master:refs/remotes/upstream/master"
           git fetch --no-tags upstream "+refs/tags/v*:refs/tags/v*"
+
+      - name: Configure push remote
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          git remote set-url --push origin "https://x-access-token:${SYNC_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if ! GIT_TERMINAL_PROMPT=0 git ls-remote "$(git remote get-url --push origin)" HEAD > /dev/null; then
+            echo "::error::GitHub rejected SYNC_TOKEN; check it is unexpired and grants this repository Contents + Workflows read/write"
+            exit 1
+          fi
 
       - name: Merge upstream master
         run: |
