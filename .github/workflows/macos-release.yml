@@ -1,0 +1,110 @@
+name: macOS release
+# Keep this exactly "Build <tag>": sync-upstream.yml matches the run title with
+# grep -qxF to avoid dispatching a second build for a tag already in flight.
+run-name: "Build ${{ inputs.tag }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "hashcat release tag to build (vX.Y.Z, v7.0.0 or newer)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      proceed: ${{ steps.check.outputs.proceed }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ inputs.tag }}
+    steps:
+      - name: Validate tag and check for existing release
+        id: check
+        run: |
+          if [[ ! "$TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "::error::'$TAG' is not a release tag (expected vX.Y.Z)"
+            exit 1
+          fi
+          NUM=$(( ${BASH_REMATCH[1]} * 10000 + ${BASH_REMATCH[2]} * 100 + ${BASH_REMATCH[3]} ))
+          if (( NUM < 70000 )); then
+            echo "::error::only v7.0.0 and above are built"
+            exit 1
+          fi
+          if [[ -z "$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/$TAG" --jq '.[] | select(.ref == "refs/tags/'"$TAG"'")')" ]]; then
+            echo "::error::tag '$TAG' does not exist in this repository yet; run the 'Sync upstream' workflow first"
+            exit 1
+          fi
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json tagName > /dev/null 2>&1; then
+            echo "release $TAG already exists; nothing to do"
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: preflight
+    if: needs.preflight.outputs.proceed == 'true'
+    runs-on: macos-26
+    timeout-minutes: 120
+    env:
+      TAG: ${{ inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Check out hashcat source at tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          fetch-depth: 1
+
+      - name: Build
+        run: make -j"$(sysctl -n hw.ncpu)"
+
+      - name: Smoke test
+        run: |
+          ./hashcat --version
+          ./hashcat --help > /dev/null
+
+      - name: Package
+        run: |
+          NAME="hashcat-$TAG-macos-arm64"
+          DIST="$RUNNER_TEMP/dist"
+          STAGE="$RUNNER_TEMP/$NAME"
+          mkdir -p "$DIST" "$STAGE"
+          # binary plus everything it loads at runtime relative to itself
+          for f in hashcat hashcat.hcstat2 example.dict example*.* \
+                   OpenCL Python Rust bridges charsets docs extra include \
+                   layouts masks modules rules tools tunings README.md; do
+            [[ -e "$f" ]] && cp -R "$f" "$STAGE/"
+          done
+          tar -C "$RUNNER_TEMP" -cJf "$DIST/$NAME.tar.xz" "$NAME"
+          (cd "$DIST" && shasum -a 256 *.tar.xz > SHA256SUMS)
+          cat "$DIST/SHA256SUMS"
+
+      - name: Create release
+        run: |
+          {
+            echo "hashcat $TAG built from upstream tag \`$TAG\` ($(git rev-parse --short HEAD))"
+            echo "for macOS on Apple Silicon (runner: \`$ImageOS\`)."
+            echo
+            echo "The binaries are not code-signed; after extracting run:"
+            echo '```'
+            echo "xattr -dr com.apple.quarantine hashcat-$TAG-macos-arm64"
+            echo '```'
+            echo
+            echo "Upstream release notes: https://github.com/hashcat/hashcat/releases/tag/$TAG"
+          } > "$RUNNER_TEMP/notes.md"
+          gh release create "$TAG" \
+            --verify-tag \
+            --title "hashcat $TAG (macOS Apple Silicon)" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            "$RUNNER_TEMP"/dist/*

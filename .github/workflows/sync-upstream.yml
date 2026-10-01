@@ -1,0 +1,77 @@
+name: Sync upstream
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # pin gh to this repo: it would otherwise resolve the git remote
+      # named "upstream" (hashcat/hashcat) added below
+      GH_REPO: ${{ github.repository }}
+      UPSTREAM: https://github.com/hashcat/hashcat.git
+    steps:
+      - name: Check out master
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          filter: blob:none
+
+      - name: Fetch upstream branch and release tags
+        run: |
+          git remote add upstream "$UPSTREAM"
+          git fetch --no-tags upstream "+refs/heads/master:refs/remotes/upstream/master"
+          git fetch --no-tags upstream "+refs/tags/v*:refs/tags/v*"
+
+      - name: Merge upstream master
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git merge --no-edit upstream/master; then
+            git merge --abort
+            echo "::warning::merge with upstream/master conflicted; master not updated (tags still synced)"
+          fi
+
+      - name: Push tags
+        run: git push origin --tags
+
+      - name: Dispatch builds for unreleased tags (v7.0.0 and above)
+        run: |
+          MIN=70000  # v7.0.0
+          ACTIVE=$(gh run list --workflow macos-release.yml --limit 100 --json displayTitle,status \
+            --jq '.[] | select(.status == "queued" or .status == "in_progress" or .status == "waiting") | .displayTitle')
+          for TAG in $(git tag --list 'v*' | sort -V); do
+            [[ "$TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || continue
+            NUM=$(( ${BASH_REMATCH[1]} * 10000 + ${BASH_REMATCH[2]} * 100 + ${BASH_REMATCH[3]} ))
+            (( NUM >= MIN )) || continue
+            if gh release view "$TAG" --json tagName > /dev/null 2>&1; then
+              continue
+            fi
+            if grep -qxF "Build $TAG" <<< "$ACTIVE"; then
+              echo "build for $TAG already queued or running"
+              continue
+            fi
+            echo "dispatching build for $TAG"
+            gh workflow run macos-release.yml --ref "$GITHUB_REF_NAME" -f tag="$TAG"
+          done
+
+      - name: Push master
+        run: |
+          # master may have moved while this job ran (e.g. PR merges);
+          # integrate it so the push is a fast-forward
+          git fetch origin master
+          git merge --no-edit origin/master
+          git push origin HEAD:master
