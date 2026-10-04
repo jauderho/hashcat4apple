@@ -12,7 +12,7 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: build-${{ inputs.tag }}
@@ -27,6 +27,16 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       TAG: ${{ inputs.tag }}
     steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          disable-sudo: true
+          egress-policy: block
+          disable-telemetry: true
+          allowed-endpoints: >
+            api.github.com:443
+            github.com:443
+
       - name: Validate tag and check for existing release
         id: check
         run: |
@@ -55,11 +65,20 @@ jobs:
     if: needs.preflight.outputs.proceed == 'true'
     runs-on: macos-26
     timeout-minutes: 120
+    permissions:
+      contents: write  # create the release
     env:
       TAG: ${{ inputs.tag }}
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          # GitHub-hosted macOS runners support audit mode only
+          egress-policy: audit
+          disable-telemetry: true
+
       - name: Check out hashcat source at tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
