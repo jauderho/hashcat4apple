@@ -53,7 +53,8 @@ jobs:
             echo "::error::tag '$TAG' does not exist upstream"
             exit 1
           fi
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json tagName > /dev/null 2>&1; then
+          # a draft left by a failed run doesn't count; the build replaces it
+          if [[ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null)" == false ]]; then
             echo "release $TAG already exists; nothing to do"
             echo "proceed=false" >> "$GITHUB_OUTPUT"
           else
@@ -126,8 +127,15 @@ jobs:
             echo
             echo "Upstream release notes: https://github.com/hashcat/hashcat/releases/tag/$TAG"
           } > "$RUNNER_TEMP/notes.md"
+          # releases are immutable once published, so attach every asset to a
+          # draft first and publish last
+          if [[ "$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null)" == true ]]; then
+            gh release delete "$TAG" --yes
+          fi
           gh release create "$TAG" \
+            --draft \
             --target "$GITHUB_SHA" \
             --title "hashcat $TAG (macOS Apple Silicon)" \
             --notes-file "$RUNNER_TEMP/notes.md" \
             "$RUNNER_TEMP"/dist/*
+          gh release edit "$TAG" --draft=false

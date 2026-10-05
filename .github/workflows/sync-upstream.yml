@@ -73,7 +73,7 @@ jobs:
             [[ "$TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || continue
             NUM=$(( ${BASH_REMATCH[1]} * 10000 + ${BASH_REMATCH[2]} * 100 + ${BASH_REMATCH[3]} ))
             (( NUM >= MIN )) || continue
-            if gh release view "$TAG" --json tagName > /dev/null 2>&1; then
+            if [[ "$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null)" == false ]]; then
               continue
             fi
             if grep -qxF "Build $TAG" <<< "$ACTIVE"; then
