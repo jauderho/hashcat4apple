@@ -138,4 +138,6 @@ jobs:
             --title "hashcat $TAG (macOS Apple Silicon)" \
             --notes-file "$RUNNER_TEMP/notes.md" \
             "$RUNNER_TEMP"/dist/*
-          gh release edit "$TAG" --draft=false
+          # builds can finish out of order; only the highest version is Latest
+          HIGHEST=$( { gh release list --exclude-drafts --limit 100 --json tagName --jq '.[].tagName'; echo "$TAG"; } | sort -V | tail -1)
+          gh release edit "$TAG" --draft=false --latest="$([[ "$HIGHEST" == "$TAG" ]] && echo true || echo false)"
