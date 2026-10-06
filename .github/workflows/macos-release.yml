@@ -128,9 +128,14 @@ jobs:
             echo "hashcat $TAG built from upstream tag \`$TAG\` (hashcat/hashcat@$(git rev-parse HEAD))"
             echo "for macOS on Apple Silicon (runner: \`$ImageOS\`)."
             echo
-            echo "The binaries are not code-signed; after extracting run:"
+            echo "hashcat loads its kernels and modules from the folder its binary is in,"
+            echo "so keep the extracted folder intact and symlink the binary onto your PATH."
+            echo "The binaries are not code-signed, hence the xattr:"
             echo '```'
-            echo "xattr -dr com.apple.quarantine hashcat-$TAG-macos-arm64"
+            echo "mkdir -p ~/opt"
+            echo "tar -xzf hashcat-$TAG-macos-arm64.tar.gz -C ~/opt"
+            echo "xattr -dr com.apple.quarantine ~/opt/hashcat-$TAG-macos-arm64"
+            echo "ln -sf ~/opt/hashcat-$TAG-macos-arm64/hashcat ~/bin/hashcat"
             echo '```'
             echo
             echo "Upstream release notes: https://github.com/hashcat/hashcat/releases/tag/$TAG"
