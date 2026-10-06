@@ -110,6 +110,14 @@ jobs:
                    layouts masks modules rules tools tunings README.md; do
             [[ -e "$f" ]] && cp -R "$f" "$STAGE/"
           done
+          # keep only the shared libraries the Rust bridges load from cargo's
+          # target/release; the rest is build output (build_script_build-*, ...)
+          find "$STAGE" -type d -name target -path '*/Rust/*' -prune | while read -r T; do
+            mv "$T" "$T.full"
+            mkdir -p "$T/release"
+            find "$T.full/release" -maxdepth 1 -type f \( -name '*.so' -o -name '*.dylib' \) -exec cp {} "$T/release/" \;
+            rm -rf "$T.full"
+          done
           tar -C "$RUNNER_TEMP" -czf "$DIST/$NAME.tar.gz" "$NAME"
           (cd "$DIST" && shasum -a 256 *.tar.gz > SHA256SUMS)
           cat "$DIST/SHA256SUMS"
